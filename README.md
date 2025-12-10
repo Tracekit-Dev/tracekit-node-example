@@ -161,7 +161,7 @@ This endpoint throws an unhandled exception that will be:
 ### Environment Variables
 
 - `TRACEKIT_API_KEY` - Your TraceKit API key (default: `test-api-key`)
-- `TRACEKIT_ENDPOINT` - TraceKit endpoint URL (default: `http://localhost:8081/v1/traces`)
+- `TRACEKIT_ENDPOINT` - TraceKit endpoint URL (default: `https://api.tracekit.dev/v1/traces`)
 - `TRACEKIT_SERVICE_NAME` - Service name for traces (default: `node-test-app`)
 - `TRACEKIT_CODE_MONITORING_ENABLED` - Enable code monitoring (default: `true`)
 - `PORT` - Server port (default: `8084`)

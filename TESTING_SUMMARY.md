@@ -249,7 +249,7 @@ curl http://localhost:8084/exception-test
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📍 Server:              http://localhost:8084
 🔧 Service Name:        node-test-app
-📊 TraceKit Endpoint:   http://localhost:8081/v1/traces
+📊 TraceKit Endpoint:   https://api.tracekit.dev/v1/traces
 📸 Code Monitoring:     ✅ ENABLED
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
