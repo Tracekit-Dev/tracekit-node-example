@@ -8,7 +8,7 @@
     "dev": "node app.js"
   },
   "dependencies": {
-    "@tracekit/node-apm": "^1.2.0",
+    "@tracekit/node-apm": "^1.2.1",
     "dotenv": "^17.2.3",
     "express": "^4.18.0"
   },
