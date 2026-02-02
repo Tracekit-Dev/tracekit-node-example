@@ -40,6 +40,39 @@ const client = init({
 // Use the middleware (includes request context extraction)
 app.use(middleware());
 
+// Initialize metrics
+const requestCounter = client.counter('http.requests.total', { service: 'node-test-app' });
+const activeRequestsGauge = client.gauge('http.requests.active', { service: 'node-test-app' });
+const requestDurationHistogram = client.histogram('http.request.duration', { unit: 'ms' });
+const errorCounter = client.counter('http.errors.total', { service: 'node-test-app' });
+
+// Metrics middleware to track all requests
+app.use((req, res, next) => {
+  const startTime = Date.now();
+
+  // Track active requests
+  activeRequestsGauge.inc();
+
+  // Track request completion
+  res.on('finish', () => {
+    activeRequestsGauge.dec();
+
+    // Track request count
+    requestCounter.inc();
+
+    // Track request duration
+    const duration = Date.now() - startTime;
+    requestDurationHistogram.record(duration);
+
+    // Track errors
+    if (res.statusCode >= 400) {
+      errorCounter.inc();
+    }
+  });
+
+  next();
+});
+
 // Helper function to make HTTP calls (auto-instrumented)
 function makeHttpRequest(url, options = {}) {
   return new Promise((resolve, reject) => {
@@ -107,8 +140,18 @@ app.get('/', (req, res) => {
       'GET  /api/chain-test     - Chain test: Node -> Go -> Response',
       'GET  /users',
       'POST /checkout',
+      'GET  /security-test      - Test security scanning for sensitive data',
     ],
     codeMonitoring: client.getSnapshotClient() !== null,
+    metrics: {
+      enabled: true,
+      tracked: [
+        'http.requests.total - Total HTTP requests',
+        'http.requests.active - Active HTTP requests',
+        'http.request.duration - Request duration in ms',
+        'http.errors.total - Total HTTP errors',
+      ],
+    },
   });
 });
 
@@ -378,6 +421,23 @@ app.post('/checkout', async (req, res) => {
   }
 });
 
+// Security test route
+app.get('/security-test', async (req, res) => {
+  // Test sensitive data detection in snapshots
+  await client.captureSnapshot('security-test-with-sensitive-data', {
+    password: 'super_secret_password_123',
+    api_key: 'test_key_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890',
+    user_token: 'test_access_token',
+    credit_card: '4532015112830366',
+    normal_var: 'This is just normal data',
+  });
+
+  res.json({
+    message: 'Security test completed - check for security events',
+    note: 'Sensitive data should be redacted in the snapshot',
+  });
+});
+
 // Error test route
 app.get('/error-test', async (req, res) => {
   try {
@@ -432,7 +492,14 @@ app.listen(port, '0.0.0.0', () => {
   console.log(`📊 TraceKit Endpoint:   http://localhost:8081/v1/traces`);
   console.log(`📸 Code Monitoring:     ${client.getSnapshotClient() ? '✅ ENABLED' : '❌ DISABLED'}`);
   console.log(`🔗 HTTP Client Instr:   ✅ ENABLED (auto CLIENT spans)`);
+  console.log(`📈 Metrics:             ✅ ENABLED (Counter, Gauge, Histogram)`);
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('');
+  console.log('📈 Metrics Tracked:');
+  console.log('  • http.requests.total - Total HTTP requests');
+  console.log('  • http.requests.active - Active HTTP requests');
+  console.log('  • http.request.duration - Request duration (ms)');
+  console.log('  • http.errors.total - Total HTTP errors');
   console.log('');
   console.log('📋 Available Endpoints:');
   console.log(`  GET  http://localhost:${port}/              - Home`);
