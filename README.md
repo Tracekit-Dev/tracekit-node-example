@@ -42,6 +42,7 @@ This test app demonstrates:
 - ✅ **Exception Handling** - Automatic exception capture with stack traces
 - ✅ **Variable Capture** - Captures local variables at snapshot points
 - ✅ **Request Context** - Includes HTTP request details in traces
+- ✅ **Metrics Tracking** - Counter, Gauge, and Histogram metrics with automatic OTLP export
 
 ## Endpoints
 
@@ -116,6 +117,86 @@ This endpoint throws an unhandled exception that will be:
 - Captured by the error handler middleware
 - Recorded as an exception event
 - Sent with full stack trace for code discovery
+
+## Metrics
+
+The app tracks the following metrics automatically:
+
+### HTTP Request Metrics
+
+- **`http.requests.total`** (Counter) - Total number of HTTP requests
+- **`http.requests.active`** (Gauge) - Number of currently active requests
+- **`http.request.duration`** (Histogram) - Request duration in milliseconds
+- **`http.errors.total`** (Counter) - Total number of HTTP errors (status >= 400)
+
+### How Metrics Work
+
+Metrics are initialized at application startup and tracked via middleware:
+
+```javascript
+// Initialize metrics
+const requestCounter = client.counter('http.requests.total', { service: 'node-test-app' });
+const activeRequestsGauge = client.gauge('http.requests.active', { service: 'node-test-app' });
+const requestDurationHistogram = client.histogram('http.request.duration', { unit: 'ms' });
+const errorCounter = client.counter('http.errors.total', { service: 'node-test-app' });
+
+// Metrics middleware
+app.use((req, res, next) => {
+  const startTime = Date.now();
+
+  // Track active requests
+  activeRequestsGauge.inc();
+
+  res.on('finish', () => {
+    // Track request count
+    requestCounter.inc();
+
+    // Track duration
+    const duration = Date.now() - startTime;
+    requestDurationHistogram.record(duration);
+
+    // Track errors
+    if (res.statusCode >= 400) {
+      errorCounter.inc();
+    }
+
+    // Decrement active requests
+    activeRequestsGauge.dec();
+  });
+
+  next();
+});
+```
+
+### Testing Metrics
+
+Generate some load to see metrics in action:
+
+```bash
+# Single request
+curl http://localhost:8084/health
+
+# Generate multiple requests
+for i in {1..10}; do
+  curl http://localhost:8084/health
+  curl http://localhost:8084/users
+  curl http://localhost:8084/api/data
+done
+```
+
+### Viewing Metrics
+
+Metrics are automatically exported to TraceKit every 10 seconds or when 100 metrics are buffered:
+
+1. Navigate to the Metrics section in TraceKit dashboard
+2. Filter by service name: `node-test-app`
+3. View metric trends, distributions, and aggregations
+
+You'll see:
+- **http.requests.total** increasing with each request
+- **http.requests.active** spiking during concurrent requests
+- **http.request.duration** histogram showing distribution of request times
+- **http.errors.total** tracking failed requests
 
 ## Testing Code Monitoring
 
