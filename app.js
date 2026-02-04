@@ -1,16 +1,7 @@
-const express = require('express');
-const http = require('http');
+// IMPORTANT: Load TraceKit FIRST, before any libraries you want to instrument
+// This allows TraceKit to monkey-patch libraries like 'pg', 'mysql', 'mongodb', etc.
+require('dotenv').config(); // Load environment variables from .env file first
 const { init, middleware, getClient } = require('@tracekit/node-apm');
-require('dotenv').config(); // Load environment variables from .env file
-
-const app = express();
-app.use(express.json());
-
-// Service URLs for cross-service communication
-const GO_SERVICE_URL = 'http://localhost:8082';
-const PYTHON_SERVICE_URL = 'http://localhost:5001';
-const LARAVEL_SERVICE_URL = 'http://localhost:8083';
-const PHP_SERVICE_URL = 'http://localhost:8086';
 
 // Validate required environment variables
 if (!process.env.TRACEKIT_API_KEY) {
@@ -20,15 +11,22 @@ if (!process.env.TRACEKIT_API_KEY) {
   process.exit(1);
 }
 
-// Initialize TraceKit with configuration from environment variables
+// CRITICAL: Call init() BEFORE loading any libraries you want to auto-instrument
+// This ensures database instrumentations are registered before pg is loaded
 const client = init({
   apiKey: process.env.TRACEKIT_API_KEY,
-  endpoint: process.env.TRACEKIT_ENDPOINT || 'http://localhost:8081/v1/traces',
   serviceName: process.env.SERVICE_NAME || 'node-test-app',
+  endpoint: process.env.TRACEKIT_ENDPOINT || 'http://localhost:8081/v1/traces',
+  metricsEndpoint: process.env.TRACEKIT_METRICS_ENDPOINT || 'http://localhost:8081/v1/metrics',
+  snapshotApiKey: process.env.TRACEKIT_SNAPSHOT_API_KEY,
+  snapshotEndpoint: process.env.TRACEKIT_SNAPSHOT_ENDPOINT || 'http://localhost:8081',
+  environment: process.env.TRACEKIT_ENVIRONMENT || 'development',
   enableCodeMonitoring: process.env.TRACEKIT_CODE_MONITORING === 'true',
   autoInstrumentHttpClient: true, // This enables CLIENT spans for outgoing HTTP calls
+  enabled: true,
+  sampleRate: 1.0,
+  batchSpanProcessor: false,
   // Map localhost URLs to actual service names for service graph
-  // This helps TraceKit understand cross-service dependencies
   serviceNameMappings: {
     'localhost:8082': 'go-test-app',
     'localhost:5001': 'python-test-app',
@@ -36,6 +34,29 @@ const client = init({
     'localhost:8086': 'php-test-app',
   },
 });
+
+// Now load other libraries AFTER TraceKit init() - this enables auto-instrumentation
+const express = require('express');
+const http = require('http');
+const { Pool } = require('pg'); // pg loaded AFTER init() for auto-instrumentation
+
+const app = express();
+app.use(express.json());
+
+// PostgreSQL connection pool for auto-instrumentation testing
+const pool = new Pool({
+  host: 'localhost',
+  port: 5437,
+  database: 'ruby_test_app',
+  user: 'contextio',
+  password: 'contextio_dev_password',
+});
+
+// Service URLs for cross-service communication
+const GO_SERVICE_URL = 'http://localhost:8082';
+const PYTHON_SERVICE_URL = 'http://localhost:5001';
+const LARAVEL_SERVICE_URL = 'http://localhost:8083';
+const PHP_SERVICE_URL = 'http://localhost:8086';
 
 // Use the middleware (includes request context extraction)
 app.use(middleware());
@@ -132,6 +153,7 @@ app.get('/', (req, res) => {
       'GET  /health',
       'GET  /',
       'GET  /api/data           - Data endpoint (called by other services)',
+      'GET  /api/users-db       - PostgreSQL auto-instrumentation test (CLIENT span)',
       'GET  /api/call-go        - Call Go service',
       'GET  /api/call-python    - Call Python service',
       'GET  /api/call-laravel   - Call Laravel service',
@@ -354,6 +376,55 @@ app.get('/users', async (req, res) => {
   });
 });
 
+// Database auto-instrumentation test endpoint
+// This endpoint queries PostgreSQL and automatically creates CLIENT spans
+app.get('/api/users-db', async (req, res) => {
+  try {
+    console.log('\n📊 Database Query Test - PostgreSQL Auto-Instrumentation');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    await client.captureSnapshot('db-query-start', {
+      database: 'postgresql',
+      table: 'users',
+    });
+
+    // This query will be automatically traced by PostgreSQL instrumentation
+    // A CLIENT span will be created showing the SQL query
+    console.log('🔍 Executing: SELECT id, name, email, created_at FROM users LIMIT 10');
+    console.log('📍 Database: ruby_test_app (PostgreSQL)');
+    console.log('⚡ Auto-instrumented by @opentelemetry/instrumentation-pg');
+
+    const result = await pool.query('SELECT id, name, email, created_at FROM users LIMIT 10');
+
+    console.log(`✅ Query successful - ${result.rows.length} rows returned`);
+    console.log('📤 CLIENT span created automatically and sent to TraceKit');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+    await client.captureSnapshot('db-query-success', {
+      rowCount: result.rows.length,
+      database: 'postgresql',
+    });
+
+    res.json({
+      source: 'postgresql',
+      database: 'ruby_test_app',
+      users: result.rows,
+      count: result.rows.length,
+      message: 'Database query auto-instrumented - check TraceKit for CLIENT span',
+    });
+  } catch (error) {
+    await client.captureSnapshot('db-query-error', {
+      error: error.message,
+      database: 'postgresql',
+    });
+
+    res.status(500).json({
+      error: error.message,
+      message: 'Database query failed',
+    });
+  }
+});
+
 // Checkout endpoint with complex logic
 app.post('/checkout', async (req, res) => {
   const { userId, amount, userType } = req.body;
@@ -492,6 +563,7 @@ app.listen(port, '0.0.0.0', () => {
   console.log(`📊 TraceKit Endpoint:   http://localhost:8081/v1/traces`);
   console.log(`📸 Code Monitoring:     ${client.getSnapshotClient() ? '✅ ENABLED' : '❌ DISABLED'}`);
   console.log(`🔗 HTTP Client Instr:   ✅ ENABLED (auto CLIENT spans)`);
+  console.log(`💾 Database Instr:      ✅ ENABLED (pg, mysql, mongodb, redis)`);
   console.log(`📈 Metrics:             ✅ ENABLED (Counter, Gauge, Histogram)`);
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('');
